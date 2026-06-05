@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-expo-app@latest . --template blank-typescript --no-install)",
+      "Bash(npm install *)",
+      "Bash(node -e \"const p=require\\('./node_modules/expo/package.json'\\); console.log\\('expo:', p.version\\); const rn=require\\('./node_modules/react-native/package.json'\\); console.log\\('react-native:', rn.version\\); const r=require\\('./node_modules/react/package.json'\\); console.log\\('react:', r.version\\);\")",
+      "Bash(npx expo *)",
+      "Bash(node scripts/create-placeholder-assets.js)",
+      "Bash(npm test *)",
+      "Bash(echo \"import { View } from 'react-native';\")",
+      "Bash(npm run *)",
+      "Bash(rm src/core/__tests__/boundary-check.ts)",
+      "Bash(npx eslint *)",
+      "Bash(node -e \"const p=require\\('./node_modules/react-native-mmkv/package.json'\\); console.log\\('mmkv version:', p.version\\); console.log\\('main:', p.main\\); console.log\\('types:', p.types\\);\")"
+    ]
+  }
+}

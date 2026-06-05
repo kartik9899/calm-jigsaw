@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Calm Jigsaw",
+    "slug": "calm-jigsaw",
+    "version": "1.0.0",
+    "scheme": "calmjigsaw",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FAF9F7"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.calmjigsaw.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FAF9F7"
+      },
+      "package": "com.calmjigsaw.app"
+    },
+    "plugins": [
+      "expo-router",
+      "react-native-mmkv"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
