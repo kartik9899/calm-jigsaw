@@ -1,14 +1,6 @@
-import { createMMKV, type MMKV } from 'react-native-mmkv';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-
-const mmkv: MMKV = createMMKV({ id: 'calm-jigsaw-settings' });
-
-const mmkvStorage = {
-  getItem: (name: string) => mmkv.getString(name) ?? null,
-  setItem: (name: string, value: string) => mmkv.set(name, value),
-  removeItem: (name: string) => mmkv.remove(name),
-};
+import { storage } from './storage';
 
 interface SettingsState {
   sound: boolean;
@@ -31,7 +23,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'settings',
-      storage: createJSONStorage(() => mmkvStorage),
+      storage: createJSONStorage(() => storage),
     },
   ),
 );

@@ -11,7 +11,14 @@
       "Bash(npm run *)",
       "Bash(rm src/core/__tests__/boundary-check.ts)",
       "Bash(npx eslint *)",
-      "Bash(node -e \"const p=require\\('./node_modules/react-native-mmkv/package.json'\\); console.log\\('mmkv version:', p.version\\); console.log\\('main:', p.main\\); console.log\\('types:', p.types\\);\")"
+      "Bash(node -e \"const p=require\\('./node_modules/react-native-mmkv/package.json'\\); console.log\\('mmkv version:', p.version\\); console.log\\('main:', p.main\\); console.log\\('types:', p.types\\);\")",
+      "Bash(node -e ' *)",
+      "Bash(rmdir /s /q node_modules)",
+      "Bash(del package-lock.json)",
+      "Bash(Remove-Item -Recurse -Force node_modules)",
+      "Bash(Remove-Item -Force package-lock.json)",
+      "Bash(Write-Host \"Cleaned.\")",
+      "Bash(npm uninstall *)"
     ]
   }
 }
