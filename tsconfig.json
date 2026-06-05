@@ -3,15 +3,22 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@core/*": ["./src/core/*"],
-      "@ui/*": ["./src/ui/*"],
-      "@state/*": ["./src/state/*"]
+      "@core/*": [
+        "./src/core/*"
+      ],
+      "@ui/*": [
+        "./src/ui/*"
+      ],
+      "@state/*": [
+        "./src/state/*"
+      ]
     }
   },
   "include": [
     "**/*.ts",
     "**/*.tsx",
     ".expo/types/**/*.d.ts",
-    "expo-env.d.ts"
+    "expo-env.d.ts",
+    ".expo/types/**/*.ts"
   ]
 }
