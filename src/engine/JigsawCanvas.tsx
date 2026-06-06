@@ -3,7 +3,7 @@ import { Canvas, Fill, Group, Image as SkiaImage, useImage } from '@shopify/reac
 import type { SkImage } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import {
   runOnJS,
   runOnUI,
@@ -65,8 +65,8 @@ export function JigsawCanvas({
   ...sessionParams
 }: JigsawCanvasProps) {
   const { width: screenW, height: screenH } = useWindowDimensions();
-  const { puzzle, solveState, uf, moveGroup, applySnap } = usePuzzleSession(sessionParams);
-  const perfStats = usePerfStats(showPerfOverlay);
+  const { puzzle, solveState, uf, moveGroup, applySnap, generationMs } =
+    usePuzzleSession(sessionParams);
   const camera = useCamera(screenW, screenH, sessionParams.imageAspect);
   const image = useImage(imageSource);
 
@@ -74,6 +74,7 @@ export function JigsawCanvas({
 
   const [textures, setTextures] = useState<Map<number, SkImage>>(new Map());
   const [rasterPct, setRasterPct] = useState(0);
+  const [rasterMs, setRasterMs] = useState<number | null>(null);
   const [ready, setReady] = useState(false);
 
   // ── Solve-state ref (always current, avoids stale closure in endDrag) ──────
@@ -91,13 +92,18 @@ export function JigsawCanvas({
   // Changing this triggers one re-render at drag-start and one at drag-end.
   const [draggedRoot, setDraggedRoot] = useState<number | null>(null);
 
-  // ── Drag state (Reanimated) ────────────────────────────────────────────────
+  // isDraggingPiece declared here (before usePerfStats) so it can be passed
+  // as a SharedValue for drag-FPS bucketing in the gate instrumentation.
+  const isDraggingPiece = useSharedValue(false);
+
+  // ── Perf / gate instrumentation ───────────────────────────────────────────
+
+  const perfStats = usePerfStats(showPerfOverlay, isDraggingPiece, camera.scale);
+
+  // ── Remaining drag state (Reanimated) ─────────────────────────────────────
 
   // AABB lookup for UI-thread hit-testing. Rebuilt when solve-state changes.
   const aabbTable = useSharedValue<AabbEntry[]>([]);
-
-  // True while a piece-drag gesture is active (UI thread only, no re-render).
-  const isDraggingPiece = useSharedValue(false);
 
   // Preserves the dragged root across the gesture lifecycle (onBegin → onEnd).
   const dragRootForEnd = useSharedValue(-1);
@@ -132,10 +138,13 @@ export function JigsawCanvas({
     let cancelled = false;
     setReady(false);
     setRasterPct(0);
+    setRasterMs(null);
+    const t0 = performance.now();
     rasterizeAll(puzzle.pieces, puzzle, image, 8, (done, total) => {
       if (!cancelled) setRasterPct(Math.round((done / total) * 100));
     }).then((map) => {
       if (!cancelled) {
+        setRasterMs(performance.now() - t0);
         setTextures(map);
         setReady(true);
       }
@@ -471,11 +480,31 @@ export function JigsawCanvas({
         )}
 
         {showPerfOverlay && (
-          <View style={styles.perfOverlay} pointerEvents="none">
-            <Text style={styles.perfText}>{`FPS ${perfStats.fps}`}</Text>
-            {perfStats.memoryMB !== null && (
-              <Text style={styles.perfText}>{`MEM ${perfStats.memoryMB}MB`}</Text>
-            )}
+          <View style={styles.perfOverlay}>
+            {/* Live metrics */}
+            <Text style={styles.perfHeader}>GATE-001</Text>
+            <Text style={styles.perfText}>{`FPS  ${perfStats.fps}`}</Text>
+            <Text style={styles.perfText}>
+              {`MEM  ${perfStats.memoryMB ?? '—'}MB  Peak ${perfStats.peakMemoryMB ?? '—'}MB`}
+            </Text>
+            <Text style={styles.perfText}>{`Gen  ${generationMs.toFixed(1)}ms`}</Text>
+            <Text style={styles.perfText}>
+              {rasterMs !== null
+                ? `Rast ${(rasterMs / 1000).toFixed(2)}s`
+                : ready
+                  ? 'Rast —'
+                  : `Rast ${rasterPct}%…`}
+            </Text>
+            <Text style={styles.perfText}>
+              {`Drag n=${perfStats.dragSampleCount}  ZOut n=${perfStats.zoomedOutSampleCount}`}
+            </Text>
+            {/* Tap to print full report with percentiles to Metro / ADB logcat */}
+            <Pressable
+              style={styles.perfButton}
+              onPress={() => perfStats.printReport(generationMs, rasterMs)}
+            >
+              <Text style={styles.perfButtonText}>LOG REPORT</Text>
+            </Pressable>
           </View>
         )}
       </View>
@@ -511,14 +540,36 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 48,
     right: 12,
-    backgroundColor: '#000000BB',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    backgroundColor: '#000000CC',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    minWidth: 200,
+  },
+  perfHeader: {
+    fontSize: 10,
+    color: '#FFFFFF88',
+    fontFamily: 'monospace',
+    letterSpacing: 2,
+    marginBottom: 4,
   },
   perfText: {
     fontSize: 12,
     color: '#00FF88',
     fontFamily: 'monospace',
+    lineHeight: 18,
+  },
+  perfButton: {
+    marginTop: 6,
+    backgroundColor: '#00FF8833',
+    borderRadius: 4,
+    paddingVertical: 4,
+    alignItems: 'center',
+  },
+  perfButtonText: {
+    fontSize: 11,
+    color: '#00FF88',
+    fontFamily: 'monospace',
+    letterSpacing: 1,
   },
 });

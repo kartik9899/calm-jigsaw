@@ -26,6 +26,8 @@ export interface PuzzleSession {
   applySnap: (candidate: SnapCandidate) => void;
   /** Translate a group by (dx, dy) world units after a drag drop. */
   moveGroup: (root: number, dx: number, dy: number) => void;
+  /** Wall-clock time to run generate() for this puzzle (ms). GATE-001 C1. */
+  generationMs: number;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -66,10 +68,11 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
   const { puzzleId, rows, cols, seed, imageAspect } = params;
   const { setSession } = useSessionStore();
 
-  const puzzle = useMemo(
-    () => generate({ rows, cols, seed, imageAspect }),
-    [rows, cols, seed, imageAspect],
-  );
+  const { puzzle, generationMs } = useMemo(() => {
+    const t0 = performance.now();
+    const p = generate({ rows, cols, seed, imageAspect });
+    return { puzzle: p, generationMs: performance.now() - t0 };
+  }, [rows, cols, seed, imageAspect]);
 
   // Solve state — local source of truth for rendering.
   // Lazy initializer runs once; component re-mount resets it (via key=puzzleId).
@@ -133,5 +136,5 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
     [setSession],
   );
 
-  return { puzzle, solveState, uf: ufRef.current, applySnap, moveGroup };
+  return { puzzle, solveState, uf: ufRef.current, applySnap, moveGroup, generationMs };
 }

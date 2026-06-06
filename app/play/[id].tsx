@@ -25,7 +25,7 @@ const GATE_PUZZLE = {
   imageAspect: 3 / 2,
 } as const;
 
-const GATE_MODE = false;
+const GATE_MODE = true;
 const PUZZLE = GATE_MODE ? GATE_PUZZLE : SAMPLE_PUZZLE;
 
 export default function PlayScreen() {
