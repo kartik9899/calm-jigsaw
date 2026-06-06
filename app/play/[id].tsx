@@ -1,33 +1,43 @@
-import { Canvas, Fill, Image, Path, Skia, useImage } from '@shopify/react-native-skia';
 import { router } from 'expo-router';
-import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+
+import { JigsawCanvas } from '../../src/engine/JigsawCanvas';
 import { spacing, typeScale } from '../../src/ui/theme';
 
-// Triangle path — proof that the Skia GPU canvas is rendering
-const TRIANGLE_SVG = 'M 140 40 L 260 220 L 20 220 Z';
+// ── Puzzle configs ────────────────────────────────────────────────────────────
+
+// Hardcoded for M2 de-risk. M3 will derive rows/cols/seed from the puzzle library.
+const SAMPLE_PUZZLE = {
+  puzzleId: 'sample-4x6',
+  rows: 4,
+  cols: 6,
+  seed: 42,
+  imageAspect: 3 / 2,
+} as const;
+
+// 14 × 25 = 350 pieces — used for GATE-001 performance measurement.
+// Set GATE_MODE = true locally before running the gate; keep false for normal play.
+const GATE_PUZZLE = {
+  puzzleId: 'gate-14x25',
+  rows: 14,
+  cols: 25,
+  seed: 42,
+  imageAspect: 3 / 2,
+} as const;
+
+const GATE_MODE = false;
+const PUZZLE = GATE_MODE ? GATE_PUZZLE : SAMPLE_PUZZLE;
 
 export default function PlayScreen() {
-  // Bundled puzzle sample image (run scripts/create-placeholder-assets.js once first)
-  const image = useImage(require('../../assets/puzzles/sample.png'));
-
-  const path = useMemo(() => {
-    return Skia.Path.MakeFromSVGString(TRIANGLE_SVG) ?? Skia.Path.Make();
-  }, []);
-
   return (
     <View style={styles.root}>
-      {/* Skia canvas — the M2 game board lives here */}
-      <Canvas style={styles.canvas}>
-        <Fill color="#FAF9F7" />
-
-        {/* Bundled image ✓ */}
-        {image && <Image image={image} x={20} y={20} width={240} height={180} fit="cover" />}
-
-        {/* Path ✓ */}
-        <Path path={path} color="#6B7FA040" style="fill" />
-        <Path path={path} color="#6B7FA0" style="stroke" strokeWidth={2} />
-      </Canvas>
+      {/* key ensures the canvas (and all its state) resets on new games */}
+      <JigsawCanvas
+        key={PUZZLE.puzzleId}
+        imageSource={require('../../assets/puzzles/sample.png')}
+        showPerfOverlay={GATE_MODE}
+        {...PUZZLE}
+      />
 
       <Pressable style={styles.back} onPress={() => router.back()}>
         <Text style={styles.backLabel}>← Back</Text>
@@ -37,8 +47,7 @@ export default function PlayScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#FAF9F7' },
-  canvas: { flex: 1 },
+  root: { flex: 1, backgroundColor: '#F0EDE8' },
   back: {
     position: 'absolute',
     top: spacing.xxxl,
