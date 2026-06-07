@@ -3,7 +3,9 @@ import { useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, useColorScheme, View } from 'react-native';
 
 import { getPuzzle } from '../../src/content/contentLoader';
+import { gridForDifficulty } from '../../src/core/generation/grid';
 import type { Difficulty } from '../../src/core/types';
+import { hasSession } from '../../src/state/persistence';
 import { darkColors, lightColors, spacing, typeScale } from '../../src/ui/theme';
 
 const DIFFICULTIES: ReadonlyArray<{ value: Difficulty; label: string; hint: string }> = [
@@ -32,6 +34,11 @@ export default function PuzzleSelectScreen() {
 
   const previewSource =
     typeof puzzle.imageSource === 'number' ? puzzle.imageSource : { uri: puzzle.imageSource };
+
+  // Same key derivation as the play screen — a puzzle in progress at this exact
+  // difficulty resumes; switching the pill re-checks for that difficulty's save.
+  const { rows, cols } = gridForDifficulty(difficulty, puzzle.imageAspect);
+  const resumable = hasSession(`${puzzle.id}-${difficulty}`, rows, cols);
 
   return (
     <ScrollView
@@ -83,6 +90,12 @@ export default function PuzzleSelectScreen() {
         })}
       </View>
 
+      {resumable && (
+        <Text style={[styles.resumeHint, { color: colors.textSecondary }]}>
+          You have this difficulty in progress.
+        </Text>
+      )}
+
       <Pressable
         onPress={() => router.push(`/play/${puzzle.id}?difficulty=${difficulty}` as never)}
         style={({ pressed }) => [
@@ -90,7 +103,9 @@ export default function PuzzleSelectScreen() {
           { backgroundColor: colors.accent, opacity: pressed ? 0.85 : 1 },
         ]}
       >
-        <Text style={[styles.ctaLabel, { color: colors.accentForeground }]}>Start Puzzle →</Text>
+        <Text style={[styles.ctaLabel, { color: colors.accentForeground }]}>
+          {resumable ? 'Resume Puzzle →' : 'Start Puzzle →'}
+        </Text>
       </Pressable>
 
       <Pressable onPress={() => router.back()} style={styles.backWrap}>
@@ -117,6 +132,11 @@ const styles = StyleSheet.create({
   },
   pillValue: { fontSize: typeScale.subheading, fontWeight: '600' },
   pillHint: { fontSize: typeScale.caption, marginTop: spacing.xs },
+  resumeHint: {
+    fontSize: typeScale.caption,
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
   cta: {
     padding: spacing.base,
     borderRadius: 12,

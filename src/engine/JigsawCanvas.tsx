@@ -1,5 +1,14 @@
 import type { Transforms3d } from '@shopify/react-native-skia';
-import { Canvas, Fill, Group, Image as SkiaImage, useImage } from '@shopify/react-native-skia';
+import {
+  Canvas,
+  Fill,
+  Group,
+  Image as SkiaImage,
+  Path,
+  Rect,
+  Skia,
+  useImage,
+} from '@shopify/react-native-skia';
 import type { SkImage } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -9,6 +18,7 @@ import {
   runOnUI,
   useDerivedValue,
   useSharedValue,
+  withRepeat,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -53,6 +63,12 @@ interface GroupData {
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 5;
 
+// Free hints (M3-09): hintsUsed persists in SolveState, so the cap survives
+// app restarts (and Restart resets it by scattering a fresh state). Each tap
+// briefly highlights one not-yet-connected piece and the cell it belongs in.
+const MAX_HINTS = 3;
+const HINT_DURATION_MS = 4000;
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
@@ -72,8 +88,16 @@ export function JigsawCanvas({
   ...sessionParams
 }: JigsawCanvasProps) {
   const { width: screenW, height: screenH } = useWindowDimensions();
-  const { puzzle, solveState, uf, moveGroup, applySnap, generationMs } =
-    usePuzzleSession(sessionParams);
+  const {
+    puzzle,
+    solveState,
+    uf,
+    moveGroup,
+    applySnap,
+    relocateGroups,
+    consumeHint,
+    generationMs,
+  } = usePuzzleSession(sessionParams);
   const camera = useCamera(screenW, screenH, sessionParams.imageAspect);
   const image = useImage(imageSource);
 
@@ -94,6 +118,25 @@ export function JigsawCanvas({
   // Which group root is currently being dragged (null = no active drag).
   // Changing this triggers one re-render at drag-start and one at drag-end.
   const [draggedRoot, setDraggedRoot] = useState<number | null>(null);
+
+  // ── Tray / ghost-outline UX (M3-06) ────────────────────────────────────────
+
+  // Faint reference grid at the solved layout — toggleable orientation aid.
+  const [showGhostOutline, setShowGhostOutline] = useState(false);
+
+  // ── Free hint (M3-09) ──────────────────────────────────────────────────────
+
+  // Snapshot of the highlighted piece's current spot + the cell it belongs in.
+  // null = no hint showing. Cleared on timeout, drag-start (would go stale),
+  // or completion (render-gated below).
+  const [hintTarget, setHintTarget] = useState<{
+    pieceIndex: number;
+    current: { x: number; y: number };
+    slot: { x: number; y: number };
+  } | null>(null);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hintPulse = useSharedValue(0);
+  const hintOpacity = useDerivedValue(() => 0.35 + hintPulse.value * 0.45);
 
   // isDraggingPiece declared here (before usePerfStats) so it can be passed
   // as a SharedValue for drag-FPS bucketing in the gate instrumentation.
@@ -162,11 +205,93 @@ export function JigsawCanvas({
     aabbTable.value = buildAabbTable(puzzle, solveState, uf);
   }, [puzzle, solveState, uf]); // eslint-disable-line
 
+  // Drive the hint pulse — a slow yoyo fade, looping while a hint is shown.
+  useEffect(() => {
+    hintPulse.value = hintTarget ? withRepeat(withTiming(1, { duration: 650 }), -1, true) : 0;
+  }, [hintTarget, hintPulse]);
+
+  // A shown hint is a snapshot — clear it once the player starts dragging,
+  // since the highlighted piece's position could move out from under it.
+  useEffect(() => {
+    if (draggedRoot !== null) setHintTarget(null);
+  }, [draggedRoot]);
+
+  // Cancel any pending auto-dismiss timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (hintTimer.current) clearTimeout(hintTimer.current);
+    };
+  }, []);
+
   // ── Drag callbacks (JS thread) ─────────────────────────────────────────────
 
   const startDrag = useCallback((root: number) => {
     setDraggedRoot(root);
   }, []);
+
+  // "Gather" (M3-06 UX-1 fix): collect every still-unconnected single piece
+  // into a tidy cluster centred on the current viewport, so a piece that
+  // scattered far away never gets lost on a large board. Multi-piece groups
+  // are left alone — they're the player's in-progress work, not "lost" pieces.
+  const gatherSingles = useCallback(() => {
+    const roots = Object.keys(solveStateRef.current.groups).map(Number);
+    const singles = roots.filter((root) => uf.groupSize(root) === 1);
+    if (singles.length === 0) return;
+
+    // Viewport centre in world units — the cluster forms wherever the player
+    // is currently looking, not at some fixed/offscreen board location.
+    const centerX = (screenW / 2 - camera.translateX.value) / camera.scale.value;
+    const centerY = (screenH / 2 - camera.translateY.value) / camera.scale.value;
+
+    // Roughly square grid; spacing leaves room for tab overhang so neighbours
+    // in the cluster don't visually overlap.
+    const cell = Math.max(puzzle.cellW, puzzle.cellH) * 1.3;
+    const perRow = Math.max(1, Math.ceil(Math.sqrt(singles.length)));
+    const rowCount = Math.ceil(singles.length / perRow);
+
+    const updates = new Map<number, { x: number; y: number }>();
+    singles.forEach((root, i) => {
+      const piece = puzzle.pieces[root];
+      const col = i % perRow;
+      const row = Math.floor(i / perRow);
+      const targetX = centerX + (col - (perRow - 1) / 2) * cell;
+      const targetY = centerY + (row - (rowCount - 1) / 2) * cell;
+      // worldPos = correctPos + translation → translation = target − correctPos
+      updates.set(root, { x: targetX - piece.correctPos.x, y: targetY - piece.correctPos.y });
+    });
+
+    relocateGroups(updates);
+  }, [puzzle, uf, camera, screenW, screenH, relocateGroups]);
+
+  // Free hint (M3-09): briefly highlights one not-yet-connected piece together
+  // with the cell it belongs in — a nudge for a stuck player, not a solve.
+  // Picks from "singles" only (gatherSingles' definition of "lost piece");
+  // multi-piece groups are in-progress work the player can already see.
+  const requestHint = useCallback(() => {
+    if (solveStateRef.current.hintsUsed >= MAX_HINTS) return;
+
+    const roots = Object.keys(solveStateRef.current.groups).map(Number);
+    const singles = roots.filter((root) => uf.groupSize(root) === 1);
+    if (singles.length === 0) return;
+
+    const root = singles[Math.floor(Math.random() * singles.length)];
+    const piece = puzzle.pieces[root];
+    const group = solveStateRef.current.groups[root];
+    if (!group) return;
+
+    setHintTarget({
+      pieceIndex: piece.index,
+      current: {
+        x: piece.correctPos.x + group.translation.x,
+        y: piece.correctPos.y + group.translation.y,
+      },
+      slot: { x: piece.correctPos.x, y: piece.correctPos.y },
+    });
+    consumeHint();
+
+    if (hintTimer.current) clearTimeout(hintTimer.current);
+    hintTimer.current = setTimeout(() => setHintTarget(null), HINT_DURATION_MS);
+  }, [puzzle, uf, consumeHint]);
 
   // Called after the settle animation (or immediately for the surviving-root case).
   const handleSnapMerge = useCallback(
@@ -238,6 +363,42 @@ export function JigsawCanvas({
   );
 
   // ── Computed ──────────────────────────────────────────────────────────────
+
+  // True once every piece belongs to one group — hides in-canvas chrome the
+  // same way the parent's CompletionOverlay takes over the rest of the screen.
+  const puzzleSolved = isSolved(uf);
+
+  // Any unconnected single pieces left to gather? Drives the toolbar button's
+  // visibility — nothing to do once every piece has found a neighbour.
+  const hasSingles = useMemo(() => {
+    for (const root of Object.keys(solveState.groups)) {
+      if (uf.groupSize(Number(root)) === 1) return true;
+    }
+    return false;
+  }, [solveState.groups, uf]);
+
+  // Hints left this puzzle — drives the toolbar button's visibility/label.
+  const hintsRemaining = MAX_HINTS - solveState.hintsUsed;
+
+  // Faint reference grid at the solved layout (world-space, translation = 0):
+  // one Path with every cell boundary, stroked once instead of rows×cols rects.
+  const ghostGridPath = useMemo(() => {
+    const path = Skia.Path.Make();
+    const w = puzzle.cols * puzzle.cellW;
+    const h = puzzle.rows * puzzle.cellH;
+    for (let c = 0; c <= puzzle.cols; c++) {
+      const x = c * puzzle.cellW;
+      path.moveTo(x, 0);
+      path.lineTo(x, h);
+    }
+    for (let r = 0; r <= puzzle.rows; r++) {
+      const y = r * puzzle.cellH;
+      path.moveTo(0, y);
+      path.lineTo(w, y);
+    }
+    return path;
+  }, [puzzle]);
+  const ghostStrokeWidth = Math.min(puzzle.cellW, puzzle.cellH) * 0.012;
 
   // Piece lists and local AABBs per group root.
   // Recomputes after snaps because solveState changes (uf already mutated by then).
@@ -413,6 +574,17 @@ export function JigsawCanvas({
           <Fill color="#F0EDE8" />
           {ready && (
             <Group transform={camera.transform}>
+              {/* Ghost outline (M3-06): faint reference grid at the solved
+                  layout — drawn first so every piece renders on top of it. */}
+              {showGhostOutline && (
+                <Path
+                  path={ghostGridPath}
+                  style="stroke"
+                  strokeWidth={ghostStrokeWidth}
+                  color="#5C524733"
+                />
+              )}
+
               {/* Main layer: all visible groups in z-order. The dragged group
                   is rendered with opacity=0 while the overlay shows it on top. */}
               {visibleRoots.map((root) => {
@@ -466,6 +638,34 @@ export function JigsawCanvas({
                   })}
                 </Group>
               )}
+
+              {/* Hint highlight (M3-09): pulsing outlines over the piece's
+                  current spot (amber) and the cell it belongs in (green).
+                  Drawn last so it sits above every piece texture. */}
+              {hintTarget && !puzzleSolved && (
+                <Group>
+                  <Rect
+                    x={hintTarget.current.x - puzzle.tabOverhang}
+                    y={hintTarget.current.y - puzzle.tabOverhang}
+                    width={texW}
+                    height={texH}
+                    style="stroke"
+                    strokeWidth={ghostStrokeWidth * 4}
+                    color="#D9A05B"
+                    opacity={hintOpacity}
+                  />
+                  <Rect
+                    x={hintTarget.slot.x - puzzle.tabOverhang}
+                    y={hintTarget.slot.y - puzzle.tabOverhang}
+                    width={texW}
+                    height={texH}
+                    style="stroke"
+                    strokeWidth={ghostStrokeWidth * 4}
+                    color="#6B9E7F"
+                    opacity={hintOpacity}
+                  />
+                </Group>
+              )}
             </Group>
           )}
         </Canvas>
@@ -475,6 +675,36 @@ export function JigsawCanvas({
             <Text style={styles.loadingText}>
               {image ? `Preparing pieces… ${rasterPct}%` : 'Loading image…'}
             </Text>
+          </View>
+        )}
+
+        {/* Tray toolbar (M3-06): ghost-outline toggle + gather action.
+            Hidden once solved — the parent's completion panel owns that moment. */}
+        {ready && !puzzleSolved && (
+          <View style={styles.toolbar} pointerEvents="box-none">
+            <Pressable
+              style={[styles.toolbarButton, showGhostOutline && styles.toolbarButtonActive]}
+              onPress={() => setShowGhostOutline((v) => !v)}
+            >
+              <Text
+                style={[
+                  styles.toolbarButtonLabel,
+                  showGhostOutline && styles.toolbarButtonLabelActive,
+                ]}
+              >
+                Outline
+              </Text>
+            </Pressable>
+            {hasSingles && (
+              <Pressable style={styles.toolbarButton} onPress={gatherSingles}>
+                <Text style={styles.toolbarButtonLabel}>Gather pieces</Text>
+              </Pressable>
+            )}
+            {hasSingles && hintsRemaining > 0 && (
+              <Pressable style={styles.toolbarButton} onPress={requestHint}>
+                <Text style={styles.toolbarButtonLabel}>{`Hint · ${hintsRemaining} left`}</Text>
+              </Pressable>
+            )}
           </View>
         )}
 
@@ -523,6 +753,32 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6B7FA0',
     fontWeight: '500',
+  },
+  toolbar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 40,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  toolbarButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 20,
+    backgroundColor: '#FAF9F7CC',
+  },
+  toolbarButtonActive: {
+    backgroundColor: '#6B7FA0',
+  },
+  toolbarButtonLabel: {
+    fontSize: 14,
+    color: '#6B7FA0',
+    fontWeight: '500',
+  },
+  toolbarButtonLabelActive: {
+    color: '#FFFFFF',
   },
   perfOverlay: {
     position: 'absolute',

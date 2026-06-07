@@ -63,6 +63,20 @@ export function loadSession(puzzleId: string, rows: number, cols: number): Solve
   }
 }
 
+// ── Existence check ───────────────────────────────────────────────────────────
+
+/**
+ * True when a save exists for this puzzle + difficulty.
+ * Used by Selection/Home screens to offer "Resume" instead of "Start".
+ */
+export function hasSession(puzzleId: string, rows: number, cols: number): boolean {
+  try {
+    return sessions.contains(saveKey(puzzleId, rows, cols));
+  } catch {
+    return false;
+  }
+}
+
 // ── Delete ────────────────────────────────────────────────────────────────────
 
 /**

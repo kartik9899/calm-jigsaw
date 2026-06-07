@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 
 import { generate } from '../core/generation/generator';
 import { mulberry32 } from '../core/generation/prng';
+import { isSolved } from '../core/solve/completion';
 import type { SnapCandidate } from '../core/solve/snapResolver';
 import { PieceUnionFind } from '../core/solve/unionFind';
 import type { GeneratedPuzzle, SolveState } from '../core/types';
-import { saveSession } from '../state/persistence';
+import { deleteSession, loadSession, saveSession } from '../state/persistence';
 import { useSessionStore } from '../state/sessionStore';
 import { scatterGroups } from './scatter';
 
@@ -27,6 +29,14 @@ export interface PuzzleSession {
   applySnap: (candidate: SnapCandidate) => void;
   /** Translate a group by (dx, dy) world units after a drag drop. */
   moveGroup: (root: number, dx: number, dy: number) => void;
+  /**
+   * Set absolute world-space translations for several groups in one commit
+   * (e.g. the "Gather" action — M3-06). Unknown roots are ignored; persists
+   * once for the whole batch rather than once per group.
+   */
+  relocateGroups: (updates: ReadonlyMap<number, { x: number; y: number }>) => void;
+  /** Record that a free hint was used (M3-09); increments + persists hintsUsed. */
+  consumeHint: () => void;
   /** Wall-clock time to run generate() for this puzzle (ms). GATE-001 C1. */
   generationMs: number;
 }
@@ -53,6 +63,27 @@ function makeFreshSolveState(puzzleId: string, puzzle: GeneratedPuzzle): SolveSt
   };
 }
 
+/**
+ * Resume rebuilds exact state from seed (M3-03): prefer a saved SolveState
+ * when one exists and matches this puzzle's generation parameters. The
+ * parameter check guards against stale saves — e.g. a content update that
+ * changes a puzzle's seed or aspect ratio would otherwise resurrect a save
+ * whose geometry no longer matches the regenerated puzzle.
+ */
+function restoreOrCreateSolveState(puzzleId: string, puzzle: GeneratedPuzzle): SolveState {
+  const saved = loadSession(puzzleId, puzzle.rows, puzzle.cols);
+  if (
+    saved &&
+    saved.seed === puzzle.seed &&
+    saved.rows === puzzle.rows &&
+    saved.cols === puzzle.cols &&
+    saved.imageAspect === puzzle.imageAspect
+  ) {
+    return saved;
+  }
+  return makeFreshSolveState(puzzleId, puzzle);
+}
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 /**
@@ -77,8 +108,9 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
 
   // Solve state — local source of truth for rendering.
   // Lazy initializer runs once; component re-mount resets it (via key=puzzleId).
+  // Resumes an in-progress save when one matches this puzzle, else scatters fresh.
   const [solveState, setSolveState] = useState<SolveState>(() =>
-    makeFreshSolveState(puzzleId, puzzle),
+    restoreOrCreateSolveState(puzzleId, puzzle),
   );
 
   // Live union-find kept in sync with the solve state arrays.
@@ -87,11 +119,29 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
     ufRef.current = PieceUnionFind.fromArrays(solveState.unionParent, solveState.unionSize);
   }
 
+  // Always-current solve-state ref — used by the background-save effect below
+  // so it never closes over a stale value.
+  const liveStateRef = useRef(solveState);
+  liveStateRef.current = solveState;
+
   // Sync initial state to the session store for future M3 background persistence.
   // Empty deps: intentional mount-only sync.
   useEffect(() => {
     setSession(solveState);
   }, []); // eslint-disable-line
+
+  // Forced save on background/inactive (M3-03): the per-move autosave below
+  // covers normal play, but a backgrounded app mid-drag could otherwise lose
+  // the last unsettled position. Skipped once solved — the save was already
+  // deleted and shouldn't be resurrected.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'background' && next !== 'inactive') return;
+      const uf = ufRef.current;
+      if (uf && !isSolved(uf)) saveSession(liveStateRef.current);
+    });
+    return () => sub.remove();
+  }, []);
 
   const moveGroup = useCallback(
     (root: number, dx: number, dy: number) => {
@@ -113,6 +163,37 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
     [setSession],
   );
 
+  const relocateGroups = useCallback(
+    (updates: ReadonlyMap<number, { x: number; y: number }>) => {
+      if (updates.size === 0) return;
+      setSolveState((prev) => {
+        const groups = { ...prev.groups };
+        let changed = false;
+        for (const [root, translation] of updates) {
+          const g = groups[root];
+          if (!g) continue;
+          groups[root] = { ...g, translation };
+          changed = true;
+        }
+        if (!changed) return prev;
+        const next: SolveState = { ...prev, groups };
+        setSession(next);
+        saveSession(next);
+        return next;
+      });
+    },
+    [setSession],
+  );
+
+  const consumeHint = useCallback(() => {
+    setSolveState((prev) => {
+      const next: SolveState = { ...prev, hintsUsed: prev.hintsUsed + 1 };
+      setSession(next);
+      saveSession(next);
+      return next;
+    });
+  }, [setSession]);
+
   const applySnap = useCallback(
     (candidate: SnapCandidate) => {
       const uf = ufRef.current!;
@@ -132,12 +213,26 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
           unionSize: uf.getSize(),
         };
         setSession(next);
-        saveSession(next);
+        if (isSolved(uf)) {
+          // Completion leaves no dangling save — replaying starts fresh from seed.
+          deleteSession(next.puzzleId, next.rows, next.cols);
+        } else {
+          saveSession(next);
+        }
         return next;
       });
     },
     [setSession],
   );
 
-  return { puzzle, solveState, uf: ufRef.current, applySnap, moveGroup, generationMs };
+  return {
+    puzzle,
+    solveState,
+    uf: ufRef.current,
+    applySnap,
+    moveGroup,
+    relocateGroups,
+    consumeHint,
+    generationMs,
+  };
 }
