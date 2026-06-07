@@ -31,6 +31,12 @@ export interface JigsawCanvasProps extends PuzzleSessionParams {
   imageSource: number | string;
   /** Show FPS + memory overlay for GATE-001 performance measurement. */
   showPerfOverlay?: boolean;
+  /**
+   * Called once when the last two groups snap together and the puzzle is solved.
+   * Fired synchronously on the JS thread after the snap merge is committed.
+   * Will not be called more than once per mount.
+   */
+  onComplete?: () => void;
 }
 
 interface GroupData {
@@ -62,6 +68,7 @@ const MAX_SCALE = 5;
 export function JigsawCanvas({
   imageSource,
   showPerfOverlay = false,
+  onComplete,
   ...sessionParams
 }: JigsawCanvasProps) {
   const { width: screenW, height: screenH } = useWindowDimensions();
@@ -81,10 +88,6 @@ export function JigsawCanvas({
 
   const solveStateRef = useRef(solveState);
   solveStateRef.current = solveState;
-
-  // ── Completion state ───────────────────────────────────────────────────────
-
-  const [solved, setSolved] = useState(false);
 
   // ── Drag state (React) ─────────────────────────────────────────────────────
 
@@ -170,9 +173,11 @@ export function JigsawCanvas({
     (candidate: SnapCandidate) => {
       applySnap(candidate);
       setDraggedRoot(null);
-      if (isSolved(uf)) setSolved(true);
+      if (isSolved(uf)) {
+        onComplete?.();
+      }
     },
-    [applySnap, uf],
+    [applySnap, uf, onComplete],
   );
 
   const endDrag = useCallback(
@@ -473,12 +478,6 @@ export function JigsawCanvas({
           </View>
         )}
 
-        {solved && (
-          <View style={styles.solvedOverlay} pointerEvents="none">
-            <Text style={styles.solvedText}>Puzzle complete!</Text>
-          </View>
-        )}
-
         {showPerfOverlay && (
           <View style={styles.perfOverlay}>
             {/* Live metrics */}
@@ -524,17 +523,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6B7FA0',
     fontWeight: '500',
-  },
-  solvedOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#00000055',
-  },
-  solvedText: {
-    fontSize: 28,
-    color: '#FFFFFF',
-    fontWeight: '700',
   },
   perfOverlay: {
     position: 'absolute',
