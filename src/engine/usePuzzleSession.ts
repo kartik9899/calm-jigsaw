@@ -5,6 +5,7 @@ import { mulberry32 } from '../core/generation/prng';
 import type { SnapCandidate } from '../core/solve/snapResolver';
 import { PieceUnionFind } from '../core/solve/unionFind';
 import type { GeneratedPuzzle, SolveState } from '../core/types';
+import { saveSession } from '../state/persistence';
 import { useSessionStore } from '../state/sessionStore';
 import { scatterGroups } from './scatter';
 
@@ -105,6 +106,7 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
           },
         };
         setSession(next);
+        saveSession(next);
         return next;
       });
     },
@@ -130,6 +132,7 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
           unionSize: uf.getSize(),
         };
         setSession(next);
+        saveSession(next);
         return next;
       });
     },

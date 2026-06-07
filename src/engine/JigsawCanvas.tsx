@@ -31,6 +31,12 @@ export interface JigsawCanvasProps extends PuzzleSessionParams {
   imageSource: number | string;
   /** Show FPS + memory overlay for GATE-001 performance measurement. */
   showPerfOverlay?: boolean;
+  /**
+   * Called once when the last two groups snap together and the puzzle is solved.
+   * Fired synchronously on the JS thread after the snap merge is committed.
+   * Will not be called more than once per mount.
+   */
+  onComplete?: () => void;
 }
 
 interface GroupData {
@@ -62,6 +68,7 @@ const MAX_SCALE = 5;
 export function JigsawCanvas({
   imageSource,
   showPerfOverlay = false,
+  onComplete,
   ...sessionParams
 }: JigsawCanvasProps) {
   const { width: screenW, height: screenH } = useWindowDimensions();
@@ -170,9 +177,12 @@ export function JigsawCanvas({
     (candidate: SnapCandidate) => {
       applySnap(candidate);
       setDraggedRoot(null);
-      if (isSolved(uf)) setSolved(true);
+      if (isSolved(uf)) {
+        setSolved(true);
+        onComplete?.();
+      }
     },
-    [applySnap, uf],
+    [applySnap, uf, onComplete],
   );
 
   const endDrag = useCallback(
