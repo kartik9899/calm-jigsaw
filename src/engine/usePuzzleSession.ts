@@ -35,6 +35,8 @@ export interface PuzzleSession {
    * once for the whole batch rather than once per group.
    */
   relocateGroups: (updates: ReadonlyMap<number, { x: number; y: number }>) => void;
+  /** Record that a free hint was used (M3-09); increments + persists hintsUsed. */
+  consumeHint: () => void;
   /** Wall-clock time to run generate() for this puzzle (ms). GATE-001 C1. */
   generationMs: number;
 }
@@ -183,6 +185,15 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
     [setSession],
   );
 
+  const consumeHint = useCallback(() => {
+    setSolveState((prev) => {
+      const next: SolveState = { ...prev, hintsUsed: prev.hintsUsed + 1 };
+      setSession(next);
+      saveSession(next);
+      return next;
+    });
+  }, [setSession]);
+
   const applySnap = useCallback(
     (candidate: SnapCandidate) => {
       const uf = ufRef.current!;
@@ -221,6 +232,7 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
     applySnap,
     moveGroup,
     relocateGroups,
+    consumeHint,
     generationMs,
   };
 }

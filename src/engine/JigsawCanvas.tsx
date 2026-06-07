@@ -5,6 +5,7 @@ import {
   Group,
   Image as SkiaImage,
   Path,
+  Rect,
   Skia,
   useImage,
 } from '@shopify/react-native-skia';
@@ -17,6 +18,7 @@ import {
   runOnUI,
   useDerivedValue,
   useSharedValue,
+  withRepeat,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -61,6 +63,12 @@ interface GroupData {
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 5;
 
+// Free hints (M3-09): hintsUsed persists in SolveState, so the cap survives
+// app restarts (and Restart resets it by scattering a fresh state). Each tap
+// briefly highlights one not-yet-connected piece and the cell it belongs in.
+const MAX_HINTS = 3;
+const HINT_DURATION_MS = 4000;
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
@@ -80,8 +88,16 @@ export function JigsawCanvas({
   ...sessionParams
 }: JigsawCanvasProps) {
   const { width: screenW, height: screenH } = useWindowDimensions();
-  const { puzzle, solveState, uf, moveGroup, applySnap, relocateGroups, generationMs } =
-    usePuzzleSession(sessionParams);
+  const {
+    puzzle,
+    solveState,
+    uf,
+    moveGroup,
+    applySnap,
+    relocateGroups,
+    consumeHint,
+    generationMs,
+  } = usePuzzleSession(sessionParams);
   const camera = useCamera(screenW, screenH, sessionParams.imageAspect);
   const image = useImage(imageSource);
 
@@ -107,6 +123,20 @@ export function JigsawCanvas({
 
   // Faint reference grid at the solved layout — toggleable orientation aid.
   const [showGhostOutline, setShowGhostOutline] = useState(false);
+
+  // ── Free hint (M3-09) ──────────────────────────────────────────────────────
+
+  // Snapshot of the highlighted piece's current spot + the cell it belongs in.
+  // null = no hint showing. Cleared on timeout, drag-start (would go stale),
+  // or completion (render-gated below).
+  const [hintTarget, setHintTarget] = useState<{
+    pieceIndex: number;
+    current: { x: number; y: number };
+    slot: { x: number; y: number };
+  } | null>(null);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hintPulse = useSharedValue(0);
+  const hintOpacity = useDerivedValue(() => 0.35 + hintPulse.value * 0.45);
 
   // isDraggingPiece declared here (before usePerfStats) so it can be passed
   // as a SharedValue for drag-FPS bucketing in the gate instrumentation.
@@ -175,6 +205,24 @@ export function JigsawCanvas({
     aabbTable.value = buildAabbTable(puzzle, solveState, uf);
   }, [puzzle, solveState, uf]); // eslint-disable-line
 
+  // Drive the hint pulse — a slow yoyo fade, looping while a hint is shown.
+  useEffect(() => {
+    hintPulse.value = hintTarget ? withRepeat(withTiming(1, { duration: 650 }), -1, true) : 0;
+  }, [hintTarget, hintPulse]);
+
+  // A shown hint is a snapshot — clear it once the player starts dragging,
+  // since the highlighted piece's position could move out from under it.
+  useEffect(() => {
+    if (draggedRoot !== null) setHintTarget(null);
+  }, [draggedRoot]);
+
+  // Cancel any pending auto-dismiss timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (hintTimer.current) clearTimeout(hintTimer.current);
+    };
+  }, []);
+
   // ── Drag callbacks (JS thread) ─────────────────────────────────────────────
 
   const startDrag = useCallback((root: number) => {
@@ -214,6 +262,36 @@ export function JigsawCanvas({
 
     relocateGroups(updates);
   }, [puzzle, uf, camera, screenW, screenH, relocateGroups]);
+
+  // Free hint (M3-09): briefly highlights one not-yet-connected piece together
+  // with the cell it belongs in — a nudge for a stuck player, not a solve.
+  // Picks from "singles" only (gatherSingles' definition of "lost piece");
+  // multi-piece groups are in-progress work the player can already see.
+  const requestHint = useCallback(() => {
+    if (solveStateRef.current.hintsUsed >= MAX_HINTS) return;
+
+    const roots = Object.keys(solveStateRef.current.groups).map(Number);
+    const singles = roots.filter((root) => uf.groupSize(root) === 1);
+    if (singles.length === 0) return;
+
+    const root = singles[Math.floor(Math.random() * singles.length)];
+    const piece = puzzle.pieces[root];
+    const group = solveStateRef.current.groups[root];
+    if (!group) return;
+
+    setHintTarget({
+      pieceIndex: piece.index,
+      current: {
+        x: piece.correctPos.x + group.translation.x,
+        y: piece.correctPos.y + group.translation.y,
+      },
+      slot: { x: piece.correctPos.x, y: piece.correctPos.y },
+    });
+    consumeHint();
+
+    if (hintTimer.current) clearTimeout(hintTimer.current);
+    hintTimer.current = setTimeout(() => setHintTarget(null), HINT_DURATION_MS);
+  }, [puzzle, uf, consumeHint]);
 
   // Called after the settle animation (or immediately for the surviving-root case).
   const handleSnapMerge = useCallback(
@@ -298,6 +376,9 @@ export function JigsawCanvas({
     }
     return false;
   }, [solveState.groups, uf]);
+
+  // Hints left this puzzle — drives the toolbar button's visibility/label.
+  const hintsRemaining = MAX_HINTS - solveState.hintsUsed;
 
   // Faint reference grid at the solved layout (world-space, translation = 0):
   // one Path with every cell boundary, stroked once instead of rows×cols rects.
@@ -557,6 +638,34 @@ export function JigsawCanvas({
                   })}
                 </Group>
               )}
+
+              {/* Hint highlight (M3-09): pulsing outlines over the piece's
+                  current spot (amber) and the cell it belongs in (green).
+                  Drawn last so it sits above every piece texture. */}
+              {hintTarget && !puzzleSolved && (
+                <Group>
+                  <Rect
+                    x={hintTarget.current.x - puzzle.tabOverhang}
+                    y={hintTarget.current.y - puzzle.tabOverhang}
+                    width={texW}
+                    height={texH}
+                    style="stroke"
+                    strokeWidth={ghostStrokeWidth * 4}
+                    color="#D9A05B"
+                    opacity={hintOpacity}
+                  />
+                  <Rect
+                    x={hintTarget.slot.x - puzzle.tabOverhang}
+                    y={hintTarget.slot.y - puzzle.tabOverhang}
+                    width={texW}
+                    height={texH}
+                    style="stroke"
+                    strokeWidth={ghostStrokeWidth * 4}
+                    color="#6B9E7F"
+                    opacity={hintOpacity}
+                  />
+                </Group>
+              )}
             </Group>
           )}
         </Canvas>
@@ -589,6 +698,11 @@ export function JigsawCanvas({
             {hasSingles && (
               <Pressable style={styles.toolbarButton} onPress={gatherSingles}>
                 <Text style={styles.toolbarButtonLabel}>Gather pieces</Text>
+              </Pressable>
+            )}
+            {hasSingles && hintsRemaining > 0 && (
+              <Pressable style={styles.toolbarButton} onPress={requestHint}>
+                <Text style={styles.toolbarButtonLabel}>{`Hint · ${hintsRemaining} left`}</Text>
               </Pressable>
             )}
           </View>
