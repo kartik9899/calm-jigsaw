@@ -29,6 +29,12 @@ export interface PuzzleSession {
   applySnap: (candidate: SnapCandidate) => void;
   /** Translate a group by (dx, dy) world units after a drag drop. */
   moveGroup: (root: number, dx: number, dy: number) => void;
+  /**
+   * Set absolute world-space translations for several groups in one commit
+   * (e.g. the "Gather" action — M3-06). Unknown roots are ignored; persists
+   * once for the whole batch rather than once per group.
+   */
+  relocateGroups: (updates: ReadonlyMap<number, { x: number; y: number }>) => void;
   /** Wall-clock time to run generate() for this puzzle (ms). GATE-001 C1. */
   generationMs: number;
 }
@@ -155,6 +161,28 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
     [setSession],
   );
 
+  const relocateGroups = useCallback(
+    (updates: ReadonlyMap<number, { x: number; y: number }>) => {
+      if (updates.size === 0) return;
+      setSolveState((prev) => {
+        const groups = { ...prev.groups };
+        let changed = false;
+        for (const [root, translation] of updates) {
+          const g = groups[root];
+          if (!g) continue;
+          groups[root] = { ...g, translation };
+          changed = true;
+        }
+        if (!changed) return prev;
+        const next: SolveState = { ...prev, groups };
+        setSession(next);
+        saveSession(next);
+        return next;
+      });
+    },
+    [setSession],
+  );
+
   const applySnap = useCallback(
     (candidate: SnapCandidate) => {
       const uf = ufRef.current!;
@@ -186,5 +214,13 @@ export function usePuzzleSession(params: PuzzleSessionParams): PuzzleSession {
     [setSession],
   );
 
-  return { puzzle, solveState, uf: ufRef.current, applySnap, moveGroup, generationMs };
+  return {
+    puzzle,
+    solveState,
+    uf: ufRef.current,
+    applySnap,
+    moveGroup,
+    relocateGroups,
+    generationMs,
+  };
 }
