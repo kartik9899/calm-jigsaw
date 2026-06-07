@@ -7,6 +7,8 @@ import type { PuzzleContent } from '../../src/content/types';
 import { gridForDifficulty } from '../../src/core/generation/grid';
 import type { Difficulty } from '../../src/core/types';
 import { JigsawCanvas } from '../../src/engine/JigsawCanvas';
+import { deleteSession } from '../../src/state/persistence';
+import { PauseSheet } from '../../src/ui/PauseSheet';
 import { spacing, typeScale } from '../../src/ui/theme';
 
 // ── GATE-001 perf harness (unchanged from M2) ────────────────────────────────
@@ -100,6 +102,10 @@ export default function PlayScreen() {
   }>();
   const [showReference, setShowReference] = useState(false);
   const [solved, setSolved] = useState(false);
+  const [paused, setPaused] = useState(false);
+  // Bumped on Restart to force a JigsawCanvas remount (the save is deleted
+  // first, so the fresh mount scatters from seed instead of resuming).
+  const [restartNonce, setRestartNonce] = useState(0);
 
   // GATE_MODE bypasses routing/content entirely — fixed perf-measurement config.
   if (GATE_MODE) {
@@ -144,11 +150,19 @@ export default function PlayScreen() {
   const nextPuzzle =
     allPuzzles.length > 1 ? allPuzzles[(currentIndex + 1) % allPuzzles.length] : null;
 
+  const handleRestart = () => {
+    // Discard the save first so the remount scatters fresh from seed.
+    deleteSession(puzzleId, rows, cols);
+    setRestartNonce((n) => n + 1);
+    setPaused(false);
+  };
+
   return (
     <View style={styles.root}>
-      {/* key ensures the canvas (and all its state) resets when puzzle/difficulty changes */}
+      {/* key ensures the canvas (and all its state) resets when puzzle/difficulty
+          changes — restartNonce extends this so Restart forces a clean remount. */}
       <JigsawCanvas
-        key={puzzleId}
+        key={`${puzzleId}-${restartNonce}`}
         imageSource={content.imageSource}
         puzzleId={puzzleId}
         rows={rows}
@@ -165,11 +179,22 @@ export default function PlayScreen() {
             <Text style={styles.backLabel}>← Back</Text>
           </Pressable>
 
+          <Pressable style={styles.pauseButton} onPress={() => setPaused(true)}>
+            <Text style={styles.pauseButtonLabel}>Pause</Text>
+          </Pressable>
+
           <Pressable style={styles.referenceButton} onPress={() => setShowReference(true)}>
             <Text style={styles.referenceButtonLabel}>Reference</Text>
           </Pressable>
         </>
       )}
+
+      <PauseSheet
+        visible={paused}
+        onResume={() => setPaused(false)}
+        onRestart={handleRestart}
+        onQuit={() => router.replace('/' as never)}
+      />
 
       <Modal
         visible={showReference}
@@ -212,6 +237,16 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   backLabel: { fontSize: typeScale.body, color: '#6B7FA0' },
+  pauseButton: {
+    position: 'absolute',
+    top: spacing.xxxl,
+    alignSelf: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: '#FAF9F7CC',
+    borderRadius: 8,
+  },
+  pauseButtonLabel: { fontSize: typeScale.body, color: '#6B7FA0', fontWeight: '500' },
   referenceButton: {
     position: 'absolute',
     top: spacing.xxxl,
