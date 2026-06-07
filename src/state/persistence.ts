@@ -11,13 +11,13 @@
  * In Jest (`NODE_ENV=test`) MMKV returns a Map-backed mock automatically.
  */
 
-import { createMMKV } from 'react-native-mmkv';
+import { MMKV } from 'react-native-mmkv';
 
 import { deserialize, serialize } from '../core/save/serialize';
 import type { SolveState } from '../core/types';
 
 // One MMKV instance for puzzle sessions (separate id from settings).
-const sessions = createMMKV({ id: 'calm-jigsaw-sessions' });
+const sessions = new MMKV({ id: 'calm-jigsaw-sessions' });
 
 // ── Key ───────────────────────────────────────────────────────────────────────
 
@@ -71,7 +71,7 @@ export function loadSession(puzzleId: string, rows: number, cols: number): Solve
  */
 export function deleteSession(puzzleId: string, rows: number, cols: number): void {
   try {
-    sessions.remove(saveKey(puzzleId, rows, cols));
+    sessions.delete(saveKey(puzzleId, rows, cols));
   } catch {
     // Non-fatal.
   }
