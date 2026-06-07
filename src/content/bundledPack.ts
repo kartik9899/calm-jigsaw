@@ -12,6 +12,15 @@ import type { PuzzleContent } from './types';
 
 export const BUNDLED_PUZZLES: PuzzleContent[] = [
   {
+    id: 'car',
+    title: 'Stock Car',
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    imageSource: require('../../assets/puzzles/car.jpg') as number,
+    // Measured directly from the source file (1440 × 620).
+    imageAspect: 1440 / 620,
+    category: 'vehicles',
+  },
+  {
     id: 'sample',
     title: 'Mountain Lake',
     // eslint-disable-next-line @typescript-eslint/no-var-requires

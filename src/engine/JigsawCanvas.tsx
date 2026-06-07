@@ -89,10 +89,6 @@ export function JigsawCanvas({
   const solveStateRef = useRef(solveState);
   solveStateRef.current = solveState;
 
-  // ── Completion state ───────────────────────────────────────────────────────
-
-  const [solved, setSolved] = useState(false);
-
   // ── Drag state (React) ─────────────────────────────────────────────────────
 
   // Which group root is currently being dragged (null = no active drag).
@@ -178,7 +174,6 @@ export function JigsawCanvas({
       applySnap(candidate);
       setDraggedRoot(null);
       if (isSolved(uf)) {
-        setSolved(true);
         onComplete?.();
       }
     },
@@ -483,12 +478,6 @@ export function JigsawCanvas({
           </View>
         )}
 
-        {solved && (
-          <View style={styles.solvedOverlay} pointerEvents="none">
-            <Text style={styles.solvedText}>Puzzle complete!</Text>
-          </View>
-        )}
-
         {showPerfOverlay && (
           <View style={styles.perfOverlay}>
             {/* Live metrics */}
@@ -534,17 +523,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6B7FA0',
     fontWeight: '500',
-  },
-  solvedOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#00000055',
-  },
-  solvedText: {
-    fontSize: 28,
-    color: '#FFFFFF',
-    fontWeight: '700',
   },
   perfOverlay: {
     position: 'absolute',
