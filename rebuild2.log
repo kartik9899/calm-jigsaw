@@ -1,0 +1,29 @@
+› Port 8081 is being used by another process
+Input is required, but 'npx expo' is in non-interactive mode.
+Required input:
+> Use port 8082 instead?
+› Skipping dev server
+› Building app...
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+java.io.IOException: Unable to establish loopback connection
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+Error: D:\Coding\Puzzle app\calm-jigsaw\android\gradlew.bat app:assembleDebug -x lint -x test --configure-on-demand --build-cache -PreactNativeDevServerPort=8081 -PreactNativeArchitectures=arm64-v8a exited with non-zero code: 1
+Error: D:\Coding\Puzzle app\calm-jigsaw\android\gradlew.bat app:assembleDebug -x lint -x test --configure-on-demand --build-cache -PreactNativeDevServerPort=8081 -PreactNativeArchitectures=arm64-v8a exited with non-zero code: 1
+    at ChildProcess.completionListener (D:\Coding\Puzzle app\calm-jigsaw\node_modules\@expo\spawn-async\src\spawnAsync.ts:167:13)
+    at Object.onceWrapper (node:events:639:26)
+    at ChildProcess.emit (node:events:524:28)
+    at ChildProcess.cp.emit (D:\Coding\Puzzle app\calm-jigsaw\node_modules\cross-spawn\lib\enoent.js:34:29)
+    at Process.ChildProcess._handle.onexit (node:internal/child_process:293:12)
+    ...
+    at spawnAsync (D:\Coding\Puzzle app\calm-jigsaw\node_modules\@expo\spawn-async\src\spawnAsync.ts:39:21)
+    at spawnGradleAsync (D:\Coding\Puzzle app\calm-jigsaw\node_modules\@expo\cli\src\start\platforms\android\gradle.ts:134:28)
+    at assembleAsync (D:\Coding\Puzzle app\calm-jigsaw\node_modules\@expo\cli\src\start\platforms\android\gradle.ts:83:16)
+    at runAndroidAsync (D:\Coding\Puzzle app\calm-jigsaw\node_modules\@expo\cli\src\run\android\runAndroidAsync.ts:48:24)
